@@ -1,0 +1,9 @@
+# Planned dependencies (uncomment/pin versions as implementation proceeds)
+
+# stem              # Tor control library
+# PySocks           # SOCKS proxy support for Tor
+# scrapy            # crawling framework
+# scikit-learn      # similarity/deduplication model
+# torch             # alternative ML backend for similarity model
+# psycopg2-binary   # PostgreSQL driver
+# pymongo           # MongoDB driver
