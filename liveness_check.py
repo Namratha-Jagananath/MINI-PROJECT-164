@@ -3,8 +3,16 @@ Liveness Checking Module (M4)
 
 Checks whether an authorized .onion service is reachable
 through the local Tor SOCKS proxy.
+
+Supports:
+    Local execution:
+        127.0.0.1:9050
+
+    Docker execution:
+        host.docker.internal:9050
 """
 
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -20,13 +28,32 @@ class LivenessRecord:
 
 
 class LivenessChecker:
+
     def __init__(
         self,
-        tor_socks_proxy="socks5h://127.0.0.1:9050",
+        tor_socks_proxy=None,
         timeout=20,
     ):
-        self.tor_socks_proxy = tor_socks_proxy
         self.timeout = timeout
+
+        # Read Tor proxy configuration from environment.
+        # If not provided, use the normal local Tor address.
+        if tor_socks_proxy is None:
+            tor_host = os.getenv(
+                "TOR_PROXY_HOST",
+                "127.0.0.1"
+            )
+
+            tor_port = os.getenv(
+                "TOR_PROXY_PORT",
+                "9050"
+            )
+
+            tor_socks_proxy = (
+                f"socks5h://{tor_host}:{tor_port}"
+            )
+
+        self.tor_socks_proxy = tor_socks_proxy
 
         self.session = requests.Session()
 
@@ -36,13 +63,16 @@ class LivenessChecker:
         })
 
         self.session.headers.update({
-            "User-Agent": "Authorized-Tor-Liveness-Checker/1.0"
+            "User-Agent":
+                "Authorized-Tor-Liveness-Checker/1.0"
         })
 
     def check(self, url):
         """Check whether the .onion URL is currently reachable."""
 
-        checked_at = datetime.now(timezone.utc).isoformat()
+        checked_at = datetime.now(
+            timezone.utc
+        ).isoformat()
 
         try:
             response = self.session.get(
@@ -59,7 +89,6 @@ class LivenessChecker:
             )
 
         except requests.RequestException:
-
             return LivenessRecord(
                 url=url,
                 is_active=False,
@@ -78,11 +107,24 @@ if __name__ == "__main__":
 
     checker = LivenessChecker()
 
+    print(
+        "Tor Proxy:",
+        checker.tor_socks_proxy
+    )
+
     result = checker.check(url)
 
-    print("\n===== LIVENESS CHECK =====\n")
+    print(
+        "\n===== LIVENESS CHECK =====\n"
+    )
 
     print("URL:", result.url)
     print("Active:", result.is_active)
-    print("Status Code:", result.status_code)
-    print("Checked At:", result.last_checked_at)
+    print(
+        "Status Code:",
+        result.status_code
+    )
+    print(
+        "Checked At:",
+        result.last_checked_at
+    )

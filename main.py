@@ -4,14 +4,14 @@ Main Application
 Efficient Enumeration of URLs of Active Hidden Servers
 over Anonymous Channel (TOR)
 
-Runs the complete authorized pipeline:
+Pipeline:
 
-M1 - Seed Acquisition
+M1 - Multi-Channel Seed Acquisition
 M5 - Orchestration
-M2 - Tor Crawler
-M3 - Deduplication
-M4 - Liveness
-M6 - Storage
+M2 - Authorized Tor Crawler
+M3 - ML-Based Deduplication
+M4 - Continuous Liveness
+M6 - Storage / Reporting
 """
 
 from seed_acquisition import SeedAcquisitionManager
@@ -29,18 +29,19 @@ DATABASE_FILE = "tor_services.db"
 def main():
 
     print("=" * 60)
-    print("   TOR HIDDEN SERVICE ENUMERATION SYSTEM")
+    print("      TOR HIDDEN SERVICE ENUMERATION SYSTEM")
     print("=" * 60)
 
-    # ----------------------------------------
-    # M1 - Seed Acquisition
-    # ----------------------------------------
+    # ========================================================
+    # M1 - MULTI-CHANNEL SEED ACQUISITION
+    # ========================================================
 
     print("\n[M1] SEED ACQUISITION")
     print("-" * 40)
 
     manager = SeedAcquisitionManager()
 
+    # Channel 1 - Local seed file
     local_count = manager.acquire_from_file(
         "seeds.txt"
     )
@@ -48,6 +49,7 @@ def main():
     print("Channel 1 - Local Seed File")
     print("New candidates:", local_count)
 
+    # Channel 2 - Public web source
     public_count = manager.acquire_from_public_source(
         "https://onion.torproject.org/"
     )
@@ -55,6 +57,7 @@ def main():
     print("Channel 2 - Public Web Source")
     print("New candidates:", public_count)
 
+    # Channel 3 - Threat intelligence feed
     threat_count = manager.acquire_from_threat_feed(
         THREAT_INTEL_FEED_FILE
     )
@@ -62,26 +65,31 @@ def main():
     print("Channel 3 - Threat-Intelligence Feed")
     print("New candidates:", threat_count)
 
+    # ALL candidates
     all_seeds = manager.get_seeds()
 
-    print("Total valid candidates:", len(all_seeds))
+    print("\nTotal valid candidates:", len(all_seeds))
 
-    seeds = manager.get_authorized_seeds(
+    # Only authorized targets can be actually crawled
+    authorized_seeds = manager.get_authorized_seeds(
         AUTHORIZED_TARGETS_FILE
     )
 
-    print("Authorized seeds for crawling:", len(seeds))
+    print(
+        "Authorized seeds for crawling:",
+        len(authorized_seeds)
+    )
 
-    if not seeds:
-        print("No authorized targets found.")
-        return
+    for seed in authorized_seeds:
 
-    for seed in seeds:
-        print("Authorized Seed:", seed)
+        print(
+            "Authorized Seed:",
+            seed.url
+        )
 
-    # ----------------------------------------
-    # M5 - Orchestration
-    # ----------------------------------------
+    # ========================================================
+    # M5 - ORCHESTRATION
+    # ========================================================
 
     print("\n[M5] ORCHESTRATION")
     print("-" * 40)
@@ -94,34 +102,68 @@ def main():
 
     orchestrator = Orchestrator(config)
 
-    orchestrator.set_queue_depth(len(seeds))
+    # M5 scales according to actual authorized crawl queue
+    orchestrator.set_queue_depth(
+        len(authorized_seeds)
+    )
 
     worker_count = orchestrator.scale()
 
-    print("Queue depth:", orchestrator.current_queue_depth())
-    print("Workers selected:", worker_count)
+    print(
+        "Authorized crawl queue:",
+        orchestrator.current_queue_depth()
+    )
 
-    # ----------------------------------------
-    # M2 - Tor Crawler
-    # ----------------------------------------
+    print(
+        "Workers selected:",
+        worker_count
+    )
+
+    # ========================================================
+    # M2 - TOR CRAWLER
+    # ========================================================
 
     print("\n[M2] TOR CRAWLER")
     print("-" * 40)
 
-    crawl_results = orchestrator.crawl([seed.url for seed in seeds])
+    # IMPORTANT:
+    # Only authorized URLs are sent to the real Tor crawler.
+    authorized_urls = [
+        seed.url
+        for seed in authorized_seeds
+    ]
+
+    crawl_results = orchestrator.crawl(
+        authorized_urls
+    )
+
+    print(
+        "Authorized URLs submitted to crawler:",
+        len(authorized_urls)
+    )
 
     for result in crawl_results:
 
         print("\nURL:", result.url)
         print("Status:", result.status)
-        print("Content Hash:", result.content_hash)
-        print("Fetched At:", result.fetched_at)
+        print(
+            "Content Hash:",
+            result.content_hash
+        )
+        print(
+            "Content Available:",
+            result.content_text is not None
+        )
+        print(
+            "Fetched At:",
+            result.fetched_at
+        )
 
-    # ----------------------------------------
-    # M3 - Deduplication
-    # ----------------------------------------
+    # ========================================================
+    # M3 - ML-BASED DEDUPLICATION
+    # ========================================================
 
-    print("\n[M3] DEDUPLICATION")
+    print("\n[M3] ML-BASED DEDUPLICATION")
     print("-" * 40)
 
     deduplication = DeduplicationEngine(
@@ -130,36 +172,189 @@ def main():
 
     duplicate_map = {}
 
-    for result in crawl_results:
+    processed_candidates = 0
+    candidates_with_content = 0
+    candidates_without_content = 0
 
-        if result.status != "reachable":
-            continue
+    # Map crawl results by URL
+    crawl_map = {
+        result.url: result
+        for result in crawl_results
+    }
 
-        duplicate = deduplication.check_duplicate(
-            result.url,
-            result.content_hash
+    print(
+        "Candidates entering M3:",
+        len(all_seeds)
+    )
+
+    # --------------------------------------------------------
+    # ALL 66 CANDIDATES ENTER M3
+    # --------------------------------------------------------
+
+    for seed in all_seeds:
+
+        processed_candidates += 1
+
+        print("\n----------------------------------------")
+        print(
+            "M3 Candidate",
+            processed_candidates,
+            "/",
+            len(all_seeds)
+        )
+        print("URL:", seed.url)
+        print("Source:", seed.source)
+
+        crawl_result = crawl_map.get(
+            seed.url
         )
 
-        if duplicate:
+        # ----------------------------------------------------
+        # REAL CRAWLED CONTENT
+        # ----------------------------------------------------
 
-            duplicate_map[result.url] = duplicate.duplicate_of
+        if (
+            crawl_result is not None
+            and crawl_result.status == "reachable"
+            and crawl_result.content_hash
+            and crawl_result.content_text
+        ):
 
-            print("Duplicate:", result.url)
-            print("Original:", duplicate.duplicate_of)
+            candidates_with_content += 1
+
+            print(
+                "Content source:",
+                "Authorized Tor crawl"
+            )
+
+            # 1. Exact duplicate detection
+            duplicate = deduplication.check_duplicate(
+                crawl_result.url,
+                crawl_result.content_hash
+            )
+
+            if duplicate:
+
+                duplicate_map[
+                    crawl_result.url
+                ] = duplicate.duplicate_of
+
+                print(
+                    "Exact duplicate:",
+                    "YES"
+                )
+
+                print(
+                    "Duplicate of:",
+                    duplicate.duplicate_of
+                )
+
+            else:
+
+                print(
+                    "Exact duplicate:",
+                    "NO"
+                )
+
+            # 2. TF-IDF + cosine similarity
+            similarity_results = (
+                deduplication.check_similarity(
+                    crawl_result.url,
+                    crawl_result.content_text
+                )
+            )
+
+            if similarity_results:
+
+                for record in similarity_results:
+
+                    print(
+                        "ML near-duplicate:",
+                        "YES"
+                    )
+
+                    print(
+                        "Similar to:",
+                        record.similar_to
+                    )
+
+                    print(
+                        "Cosine similarity:",
+                        record.similarity_score
+                    )
+
+            else:
+
+                print(
+                    "ML near-duplicate:",
+                    "NO"
+                )
+
+        # ----------------------------------------------------
+        # NO CONTENT AVAILABLE
+        # ----------------------------------------------------
 
         else:
 
-            print("Unique:", result.url)
+            candidates_without_content += 1
 
-    print("\nUnique pages:", deduplication.count_unique())
+            print(
+                "Content source:",
+                "Not available"
+            )
+
+            print(
+                "ML status:",
+                "Candidate registered; "
+                "content unavailable"
+            )
+
+    # --------------------------------------------------------
+    # M3 SUMMARY
+    # --------------------------------------------------------
+
+    print("\n========================================")
+    print("        M3 ML DEDUPLICATION SUMMARY")
+    print("========================================")
+
+    print(
+        "Total candidates processed:",
+        processed_candidates
+    )
+
+    print(
+        "Candidates with content:",
+        candidates_with_content
+    )
+
+    print(
+        "Candidates without content:",
+        candidates_without_content
+    )
+
+    print(
+        "Unique pages:",
+        deduplication.count_unique()
+    )
+
     print(
         "Exact duplicates:",
         deduplication.count_duplicates()
     )
 
-    # ----------------------------------------
-    # M4 - Liveness
-    # ----------------------------------------
+    print(
+        "Near-duplicate pages:",
+        deduplication.count_similar_pages()
+    )
+
+    print(
+        "TF-IDF similarity threshold:",
+        deduplication.similarity_threshold
+    )
+
+    # ========================================================
+    # M4 - LIVENESS CHECK
+    # ========================================================
 
     print("\n[M4] LIVENESS CHECK")
     print("-" * 40)
@@ -168,74 +363,130 @@ def main():
 
     liveness_results = {}
 
-    for seed in seeds:
+    # Liveness is also restricted to authorized targets
+    for seed in authorized_seeds:
 
-        result = liveness_checker.check(seed.url)
+        result = liveness_checker.check(
+            seed.url
+        )
 
-        liveness_results[result.url] = result
+        liveness_results[
+            result.url
+        ] = result
 
         print("\nURL:", result.url)
-        print("Active:", result.is_active)
-        print("Status Code:", result.status_code)
-        print("Checked At:", result.last_checked_at)
 
-    # ----------------------------------------
-    # M6 - Storage
-    # ----------------------------------------
+        print(
+            "Active:",
+            result.is_active
+        )
+
+        print(
+            "Status Code:",
+            result.status_code
+        )
+
+        print(
+            "Checked At:",
+            result.last_checked_at
+        )
+
+    # ========================================================
+    # M6 - SQLITE STORAGE
+    # ========================================================
 
     print("\n[M6] SQLITE STORAGE")
     print("-" * 40)
 
-    store = DataStore(DATABASE_FILE)
+    store = DataStore(
+        DATABASE_FILE
+    )
 
     for crawl_result in crawl_results:
 
-        liveness_result = liveness_results.get(
-            crawl_result.url
+        liveness_result = (
+            liveness_results.get(
+                crawl_result.url
+            )
         )
 
-        duplicate_of = duplicate_map.get(
-            crawl_result.url
+        duplicate_of = (
+            duplicate_map.get(
+                crawl_result.url
+            )
         )
 
         record = ServiceRecord(
+
             url=crawl_result.url,
-            first_seen_at=crawl_result.fetched_at,
+
+            first_seen_at=(
+                crawl_result.fetched_at
+            ),
+
             last_checked_at=(
                 liveness_result.last_checked_at
                 if liveness_result
                 else None
             ),
+
             is_active=(
                 liveness_result.is_active
                 if liveness_result
                 else None
             ),
-            content_hash=crawl_result.content_hash,
-            is_mirror_of=duplicate_of,
+
+            content_hash=(
+                crawl_result.content_hash
+            ),
+
+            is_mirror_of=(
+                duplicate_of
+            ),
+
             source="authorized-target"
         )
 
         store.add_service(record)
 
-    print("Records stored:", store.count_services())
+    print(
+        "Records stored:",
+        store.count_services()
+    )
 
     store.close()
 
-    # ----------------------------------------
-    # Completion
-    # ----------------------------------------
+    # ========================================================
+    # COMPLETION
+    # ========================================================
 
     print("\n" + "=" * 60)
     print("             PIPELINE COMPLETE")
     print("=" * 60)
 
-    print("M1 Seed Acquisition : SUCCESS")
-    print("M2 Tor Crawler      : SUCCESS")
-    print("M3 Deduplication    : SUCCESS")
-    print("M4 Liveness         : SUCCESS")
-    print("M5 Orchestration    : SUCCESS")
-    print("M6 Storage          : SUCCESS")
+    print(
+        "M1 Seed Acquisition : SUCCESS"
+    )
+
+    print(
+        "M2 Tor Crawler      : SUCCESS"
+    )
+
+    print(
+        "M3 ML Deduplication : SUCCESS"
+    )
+
+    print(
+        "M4 Liveness         : SUCCESS"
+    )
+
+    print(
+        "M5 Orchestration    : SUCCESS"
+    )
+
+    print(
+        "M6 Storage          : SUCCESS"
+    )
 
     print("=" * 60)
 

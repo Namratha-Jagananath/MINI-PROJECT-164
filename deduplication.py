@@ -1,15 +1,8 @@
-"""
-Deduplication Module (M3)
-
-Detects:
-1. Exact duplicates using content hashes
-2. Similar pages using text similarity
-"""
-
 from dataclasses import dataclass
-from typing import List, Dict, Optional
-import re
-from difflib import SequenceMatcher
+from typing import Dict, List, Optional
+
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 
 @dataclass
@@ -27,20 +20,16 @@ class SimilarityRecord:
 
 
 class DeduplicationEngine:
-    """Detects exact duplicates and similar pages."""
 
     def __init__(self, similarity_threshold: float = 0.80):
+
+        self.similarity_threshold = similarity_threshold
+
         self.hash_to_url: Dict[str, str] = {}
         self.text_pages: Dict[str, str] = {}
 
         self.duplicates: List[DuplicateRecord] = []
         self.similar_pages: List[SimilarityRecord] = []
-
-        self.similarity_threshold = similarity_threshold
-
-    # --------------------------------------------------
-    # EXACT DUPLICATE DETECTION
-    # --------------------------------------------------
 
     def check_duplicate(
         self,
@@ -48,88 +37,145 @@ class DeduplicationEngine:
         content_hash: str
     ) -> Optional[DuplicateRecord]:
 
+        if not content_hash:
+            return None
+
         if content_hash in self.hash_to_url:
 
             original_url = self.hash_to_url[content_hash]
 
-            duplicate = DuplicateRecord(
+            record = DuplicateRecord(
                 url=url,
                 duplicate_of=original_url,
                 content_hash=content_hash
             )
 
-            self.duplicates.append(duplicate)
+            self.duplicates.append(record)
 
-            return duplicate
+            return record
 
         self.hash_to_url[content_hash] = url
 
         return None
 
-    # --------------------------------------------------
-    # TEXT NORMALIZATION
-    # --------------------------------------------------
+    @staticmethod
+    def normalize_text(text: str) -> str:
 
-    def normalize_text(self, text: str) -> str:
-        """
-        Convert text to a normalized form before comparison.
-        """
+        if not text:
+            return ""
 
         text = text.lower()
 
-        text = re.sub(r"\s+", " ", text)
+        cleaned = []
 
-        text = re.sub(r"[^a-z0-9 ]", "", text)
+        for character in text:
 
-        return text.strip()
+            if character.isalnum() or character.isspace():
+                cleaned.append(character)
 
-    # --------------------------------------------------
-    # SIMILARITY DETECTION
-    # --------------------------------------------------
+        return " ".join(
+            "".join(cleaned).split()
+        )
 
     def check_similarity(
         self,
         url: str,
         text: str
-    ) -> List[SimilarityRecord]:
+    ) -> Optional[SimilarityRecord]:
 
         normalized_text = self.normalize_text(text)
 
-        results = []
+        if not normalized_text:
+            return None
 
-        for existing_url, existing_text in self.text_pages.items():
+        if not self.text_pages:
 
-            score = SequenceMatcher(
-                None,
-                normalized_text,
-                existing_text
-            ).ratio()
+            self.text_pages[url] = normalized_text
+
+            return None
+
+        existing_urls = list(
+            self.text_pages.keys()
+        )
+
+        existing_texts = list(
+            self.text_pages.values()
+        )
+
+        documents = existing_texts + [
+            normalized_text
+        ]
+
+        try:
+
+            vectorizer = TfidfVectorizer(
+                stop_words="english"
+            )
+
+            matrix = vectorizer.fit_transform(
+                documents
+            )
+
+            new_vector = matrix[-1]
+            old_vectors = matrix[:-1]
+
+            scores = cosine_similarity(
+                new_vector,
+                old_vectors
+            )[0]
+
+        except ValueError:
+
+            self.text_pages[url] = normalized_text
+
+            return None
+
+        best_match = None
+        best_score = 0.0
+
+        for index, score in enumerate(scores):
+
+            score = float(score)
+
+            if score > best_score:
+
+                best_score = score
+                best_match = existing_urls[index]
 
             if score >= self.similarity_threshold:
 
                 record = SimilarityRecord(
                     url=url,
-                    similar_to=existing_url,
-                    similarity_score=round(score, 3)
+                    similar_to=existing_urls[index],
+                    similarity_score=score
                 )
 
                 self.similar_pages.append(record)
 
-                results.append(record)
-
         self.text_pages[url] = normalized_text
 
-        return results
+        if (
+            best_match is not None
+            and best_score >= self.similarity_threshold
+        ):
 
-    # --------------------------------------------------
-    # RESULTS
-    # --------------------------------------------------
+            return SimilarityRecord(
+                url=url,
+                similar_to=best_match,
+                similarity_score=best_score
+            )
 
-    def get_duplicates(self) -> List[DuplicateRecord]:
+        return None
+
+    def get_duplicates(
+        self
+    ) -> List[DuplicateRecord]:
 
         return self.duplicates
 
-    def get_similar_pages(self) -> List[SimilarityRecord]:
+    def get_similar_pages(
+        self
+    ) -> List[SimilarityRecord]:
 
         return self.similar_pages
 
@@ -146,21 +192,17 @@ class DeduplicationEngine:
         return len(self.similar_pages)
 
 
-# ------------------------------------------------------
-# DEMO / TEST
-# ------------------------------------------------------
-
 if __name__ == "__main__":
+
+    print("=" * 60)
+    print("TOR ML DEDUPLICATION MODULE")
+    print("=" * 60)
 
     engine = DeduplicationEngine(
         similarity_threshold=0.80
     )
 
-    print("========================================")
-    print("        TOR DEDUPLICATION MODULE")
-    print("========================================")
-
-    # Exact duplicate test
+    print("\n[1] EXACT DUPLICATE TEST")
 
     engine.check_duplicate(
         "http://site1.onion",
@@ -172,69 +214,97 @@ if __name__ == "__main__":
         "hash_abc"
     )
 
-    # Unique page
-
-    engine.check_duplicate(
-        "http://site3.onion",
-        "hash_xyz"
-    )
-
-    # Similar page test
-
-    text1 = """
-    Welcome to our secure online service.
-    Login to access your account.
-    Contact support for assistance.
-    """
-
-    text2 = """
-    Welcome to our secure online service.
-    Login to access your account.
-    Contact support for assistance.
-    """
-
-    text3 = """
-    This is a completely different website.
-    It provides unrelated information and services.
-    """
-
-    engine.check_similarity(
-        "http://site1.onion",
-        text1
-    )
-
-    similar = engine.check_similarity(
-        "http://site4.onion",
-        text2
-    )
-
-    engine.check_similarity(
-        "http://site5.onion",
-        text3
-    )
-
-    print()
-
-    print("Unique pages:", engine.count_unique())
-
-    print("Exact duplicates:", engine.count_duplicates())
-
-    print("Similar pages:", engine.count_similar_pages())
-
-    print()
-
     if duplicate:
 
-        print("Exact duplicate detected:")
+        print("Exact duplicate detected")
         print("URL:", duplicate.url)
         print("Original:", duplicate.duplicate_of)
         print("Hash:", duplicate.content_hash)
 
-    print()
+    print("\n[2] TF-IDF + COSINE SIMILARITY TEST")
 
-    for record in similar:
+    page1 = """
+    secure technology marketplace
+    encrypted communication services
+    privacy focused technology platform
+    """
 
-        print("Similar page detected:")
-        print("URL:", record.url)
-        print("Similar to:", record.similar_to)
-        print("Similarity score:", record.similarity_score)
+    page2 = """
+    secure technology marketplace
+    encrypted communication services
+    privacy focused technology platform
+    """
+
+    page3 = """
+    secure technology marketplace
+    encrypted communication services
+    privacy focused technology platform
+    customer support technology information
+    """
+
+    engine.check_similarity(
+        "http://site1.onion",
+        page1
+    )
+
+    similarity = engine.check_similarity(
+        "http://site3.onion",
+        page2
+    )
+
+    if similarity:
+
+        print("ML similarity match detected")
+        print("URL:", similarity.url)
+        print("Similar to:", similarity.similar_to)
+        print(
+            "Cosine similarity:",
+            round(
+                similarity.similarity_score,
+                4
+            )
+        )
+
+    similarity = engine.check_similarity(
+        "http://site4.onion",
+        page3
+    )
+
+    if similarity:
+
+        print("ML similarity match detected")
+        print("URL:", similarity.url)
+        print("Similar to:", similarity.similar_to)
+        print(
+            "Cosine similarity:",
+            round(
+                similarity.similarity_score,
+                4
+            )
+        )
+
+    print("\n" + "=" * 60)
+    print("ML DEDUPLICATION SUMMARY")
+    print("=" * 60)
+
+    print(
+        "Unique content hashes:",
+        engine.count_unique()
+    )
+
+    print(
+        "Exact duplicates:",
+        engine.count_duplicates()
+    )
+
+    print(
+        "Near-duplicate matches:",
+        engine.count_similar_pages()
+    )
+
+    print(
+        "TF-IDF threshold:",
+        engine.similarity_threshold
+    )
+
+    print("=" * 60)
