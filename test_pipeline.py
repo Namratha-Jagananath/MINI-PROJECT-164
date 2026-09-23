@@ -1,92 +1,118 @@
+"""
+Complete Pipeline Test
+
+Tests:
+M1 - Seed Acquisition
+M2 - Tor Crawler
+M3 - Deduplication
+M4 - Liveness
+M6 - Storage
+"""
+
 from seed_acquisition import SeedAcquisitionManager
-from crawler import TorCrawlWorker, CrawlerPool
+from crawler import TorCrawlWorker
+from deduplication import DeduplicationEngine
+from liveness_check import LivenessChecker
+from storage import DataStore, ServiceRecord
 
 
-print("\n========================================")
-print("       TOR HIDDEN SERVICE PIPELINE")
-print("========================================\n")
+AUTHORIZED_TARGETS_FILE = "authorized_targets.txt"
 
 
-# ----------------------------------------
-# STEP 1: SEED ACQUISITION
-# ----------------------------------------
+def test_complete_pipeline():
 
-print("[1] Seed Acquisition")
+    # -------------------------
+    # M1 - Seed Acquisition
+    # -------------------------
 
-manager = SeedAcquisitionManager("seeds.txt")
+    manager = SeedAcquisitionManager()
 
-seeds = manager.acquire_seeds()
+    new_seeds = manager.acquire_from_file(
+        AUTHORIZED_TARGETS_FILE
+    )
 
-print("Unique seeds found:", len(seeds))
+    seeds = manager.get_seeds()
 
-for seed in seeds:
-    print("Seed:", seed.url)
+    assert new_seeds >= 1
+    assert len(seeds) >= 1
 
+    # -------------------------
+    # M2 - Tor Crawler
+    # -------------------------
 
-# ----------------------------------------
-# STEP 2: PREPARE URLS FOR CRAWLER
-# ----------------------------------------
+    crawler = TorCrawlWorker(
+        worker_id=1,
+        timeout=20,
+        max_retries=1
+    )
 
-seed_urls = [seed.url for seed in seeds]
+    crawl_results = []
 
+    for seed in seeds:
+        result = crawler.fetch(seed)
+        crawl_results.append(result)
 
-# ----------------------------------------
-# STEP 3: CREATE CRAWLER WORKERS
-# ----------------------------------------
+    assert len(crawl_results) >= 1
 
-print("\n[2] Creating Crawler Pool")
+    reachable_results = [
+        result
+        for result in crawl_results
+        if result.status == "reachable"
+    ]
 
-worker1 = TorCrawlWorker("worker-1")
-worker2 = TorCrawlWorker("worker-2")
+    assert len(reachable_results) >= 1
 
-pool = CrawlerPool([worker1, worker2])
+    # -------------------------
+    # M3 - Deduplication
+    # -------------------------
 
+    deduplication = DeduplicationEngine(
+        similarity_threshold=0.80
+    )
 
-# ----------------------------------------
-# STEP 4: CRAWL SEEDS
-# ----------------------------------------
+    for result in reachable_results:
 
-print("\n[3] Crawling Seeds")
+        duplicate = deduplication.check_duplicate(
+            result.url,
+            result.content_hash
+        )
 
-results = pool.run(seed_urls)
+        assert duplicate is None
 
+    assert deduplication.count_unique() >= 1
 
-# ----------------------------------------
-# STEP 5: DISPLAY RESULTS
-# ----------------------------------------
+    # -------------------------
+    # M4 - Liveness
+    # -------------------------
 
-print("\n[4] Crawl Results\n")
+    checker = LivenessChecker(
+        timeout=20
+    )
 
-reachable = 0
-failed = 0
+    liveness_result = checker.check(
+        reachable_results[0].url
+    )
 
-for result in results:
+    assert liveness_result.is_active is True
+    assert liveness_result.status_code == 200
 
-    print("URL:", result.url)
-    print("Status:", result.status)
-    print("Content Hash:", result.content_hash)
-    print("Fetched At:", result.fetched_at)
-    print("----------------------------------------")
+    # -------------------------
+    # M6 - Storage
+    # -------------------------
 
-    if result.status == "reachable":
-        reachable += 1
-    else:
-        failed += 1
+    store = DataStore("test_pipeline.db")
 
+    record = ServiceRecord(
+        url=reachable_results[0].url,
+        first_seen_at=reachable_results[0].fetched_at,
+        last_checked_at=liveness_result.last_checked_at,
+        is_active=liveness_result.is_active,
+        content_hash=reachable_results[0].content_hash,
+        source="authorized-target"
+    )
 
-# ----------------------------------------
-# SUMMARY
-# ----------------------------------------
+    store.add_service(record)
 
-print("\n========================================")
-print("              SUMMARY")
-print("========================================")
+    assert store.count_services() >= 1
 
-print("Seeds found:", len(seeds))
-print("URLs crawled:", len(results))
-print("Reachable:", reachable)
-print("Failed:", failed)
-
-print("========================================")
-print("          PIPELINE COMPLETED")
-print("========================================")
+    store.close()
