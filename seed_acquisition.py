@@ -3,17 +3,21 @@ Multi-Channel Seed Acquisition Module (M1)
 
 Channels:
 1. Local seed file
-2. Official/public seed source
+2. Public web source
+3. Threat-intelligence feed
 
-The module validates, normalizes and removes duplicate
-v3 .onion URLs.
+The module:
+- validates v3 .onion URLs
+- normalizes URLs
+- removes duplicates
+- records the discovery source
+- supports an authorization allowlist
 """
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 import re
-
 import requests
 from bs4 import BeautifulSoup
 
@@ -28,11 +32,10 @@ class Seed:
 class SeedAcquisitionManager:
 
     def __init__(self):
-        self.seeds = set()
+        self.seeds = {}
 
     def is_valid_onion_url(self, url):
         """Check for a valid HTTP/HTTPS v3 onion URL."""
-
         try:
             parsed = urlparse(url.strip())
 
@@ -51,7 +54,6 @@ class SeedAcquisitionManager:
 
             onion_name = hostname[:-6]
 
-            # v3 onion addresses have 56 base32 characters
             if not re.fullmatch(r"[a-z2-7]{56}", onion_name):
                 return False
 
@@ -61,8 +63,7 @@ class SeedAcquisitionManager:
             return False
 
     def normalize_url(self, url):
-        """Normalize a URL."""
-
+        """Normalize an onion URL to scheme + hostname."""
         parsed = urlparse(url.strip())
 
         scheme = parsed.scheme.lower()
@@ -72,7 +73,6 @@ class SeedAcquisitionManager:
 
     def add_seed(self, url, source):
         """Validate and add a unique seed."""
-
         if not self.is_valid_onion_url(url):
             return False
 
@@ -81,22 +81,27 @@ class SeedAcquisitionManager:
         if normalized_url in self.seeds:
             return False
 
-        self.seeds.add(normalized_url)
+        self.seeds[normalized_url] = Seed(
+            url=normalized_url,
+            source=source,
+            discovered_at=datetime.now(timezone.utc).isoformat()
+        )
 
         return True
 
     def acquire_from_file(self, filename):
-        """Channel 1: Read seeds from a local file."""
-
+        """Channel 1: Read candidate onion URLs from a local file."""
         count = 0
 
         try:
             with open(filename, "r") as file:
-
                 for line in file:
                     url = line.strip()
 
-                    if self.add_seed(url, f"file:{filename}"):
+                    if not url or url.startswith("#"):
+                        continue
+
+                    if self.add_seed(url, f"local-file:{filename}"):
                         count += 1
 
         except FileNotFoundError:
@@ -105,8 +110,7 @@ class SeedAcquisitionManager:
         return count
 
     def acquire_from_public_source(self, source_url):
-        """Channel 2: Extract .onion URLs from a public source."""
-
+        """Channel 2: Extract candidate onion URLs from a public web source."""
         count = 0
 
         try:
@@ -123,12 +127,11 @@ class SeedAcquisitionManager:
             )
 
             for anchor in soup.find_all("a", href=True):
-
                 href = anchor["href"].strip()
 
                 if self.add_seed(
                     href,
-                    f"public:{source_url}"
+                    f"public-source:{source_url}"
                 ):
                     count += 1
 
@@ -137,57 +140,124 @@ class SeedAcquisitionManager:
 
         return count
 
-    def get_seeds(self):
-        """Return all unique seeds."""
+    def acquire_from_threat_feed(self, filename):
+        """Channel 3: Read candidate onion URLs from a threat-intelligence feed."""
+        count = 0
 
-        return sorted(self.seeds)
+        try:
+            with open(filename, "r") as file:
+                for line in file:
+                    url = line.strip()
+
+                    if not url or url.startswith("#"):
+                        continue
+
+                    if self.add_seed(url, f"threat-intel:{filename}"):
+                        count += 1
+
+        except FileNotFoundError:
+            print("Threat-intelligence feed not found:", filename)
+
+        return count
+
+    def get_seeds(self):
+        """Return all unique Seed objects."""
+        return sorted(
+            self.seeds.values(),
+            key=lambda seed: seed.url
+        )
+
+    def get_urls(self):
+        """Return only the URLs."""
+        return sorted(self.seeds.keys())
+
+    def get_authorized_seeds(self, authorization_file):
+        """Return only seeds explicitly listed in the authorization file."""
+        authorized_urls = set()
+
+        try:
+            with open(authorization_file, "r") as file:
+                for line in file:
+                    url = line.strip()
+
+                    if not url or url.startswith("#"):
+                        continue
+
+                    if self.is_valid_onion_url(url):
+                        authorized_urls.add(
+                            self.normalize_url(url)
+                        )
+
+        except FileNotFoundError:
+            print(
+                "Authorization file not found:",
+                authorization_file
+            )
+            return []
+
+        return [
+            seed
+            for seed in self.get_seeds()
+            if seed.url in authorized_urls
+        ]
 
 
 if __name__ == "__main__":
 
     manager = SeedAcquisitionManager()
 
-    print("\n========================================")
-    print("       MULTI-CHANNEL SEED ACQUISITION")
-    print("========================================")
+    print("\n" + "=" * 60)
+    print("       MULTI-CHANNEL SEED ACQUISITION - M1")
+    print("=" * 60)
 
-    # ------------------------------------
-    # CHANNEL 1: LOCAL FILE
-    # ------------------------------------
+    file_count = manager.acquire_from_file("seeds.txt")
 
-    file_count = manager.acquire_from_file(
-        "seeds.txt"
-    )
+    print("\nChannel 1 - Local Seed File")
+    print("New candidates:", file_count)
 
-    print("\nChannel 1 - Local File")
-    print("New seeds:", file_count)
-
-    # ------------------------------------
-    # CHANNEL 2: OFFICIAL TOR PROJECT SOURCE
-    # ------------------------------------
-
-    source = "https://onion.torproject.org/"
+    public_source = "https://onion.torproject.org/"
 
     public_count = manager.acquire_from_public_source(
-        source
+        public_source
     )
 
-    print("\nChannel 2 - Official Public Source")
-    print("New seeds:", public_count)
+    print("\nChannel 2 - Public Web Source")
+    print("New candidates:", public_count)
 
-    # ------------------------------------
-    # FINAL RESULTS
-    # ------------------------------------
+    threat_count = manager.acquire_from_threat_feed(
+        "threat_intel_feed.txt"
+    )
+
+    print("\nChannel 3 - Threat-Intelligence Feed")
+    print("New candidates:", threat_count)
 
     seeds = manager.get_seeds()
 
-    print("\n========================================")
-    print("              FINAL RESULTS")
-    print("========================================")
+    print("\n" + "=" * 60)
+    print("              DISCOVERY RESULTS")
+    print("=" * 60)
 
-    print("Total unique valid seeds:", len(seeds))
+    print("Total unique valid candidates:", len(seeds))
 
-    for number, url in enumerate(seeds, start=1):
-        print(f"{number}. {url}")
+    for number, seed in enumerate(seeds, start=1):
+        print(f"{number}. {seed.url}")
+        print(f"   Source: {seed.source}")
+        print(f"   Discovered: {seed.discovered_at}")
 
-    print("\n========================================")
+    authorized = manager.get_authorized_seeds(
+        "authorized_targets.txt"
+    )
+
+    print("\n" + "=" * 60)
+    print("             AUTHORIZED TARGETS")
+    print("=" * 60)
+
+    print(
+        "Authorized seeds ready for crawling:",
+        len(authorized)
+    )
+
+    for number, seed in enumerate(authorized, start=1):
+        print(f"{number}. {seed.url}")
+
+    print("\n" + "=" * 60)
