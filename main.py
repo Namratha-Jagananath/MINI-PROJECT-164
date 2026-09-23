@@ -22,6 +22,7 @@ from storage import DataStore, ServiceRecord
 
 
 AUTHORIZED_TARGETS_FILE = "authorized_targets.txt"
+THREAT_INTEL_FEED_FILE = "threat_intel_feed.txt"
 DATABASE_FILE = "tor_services.db"
 
 
@@ -40,21 +41,43 @@ def main():
 
     manager = SeedAcquisitionManager()
 
-    new_seeds = manager.acquire_from_file(
+    local_count = manager.acquire_from_file(
+        "seeds.txt"
+    )
+
+    print("Channel 1 - Local Seed File")
+    print("New candidates:", local_count)
+
+    public_count = manager.acquire_from_public_source(
+        "https://onion.torproject.org/"
+    )
+
+    print("Channel 2 - Public Web Source")
+    print("New candidates:", public_count)
+
+    threat_count = manager.acquire_from_threat_feed(
+        THREAT_INTEL_FEED_FILE
+    )
+
+    print("Channel 3 - Threat-Intelligence Feed")
+    print("New candidates:", threat_count)
+
+    all_seeds = manager.get_seeds()
+
+    print("Total valid candidates:", len(all_seeds))
+
+    seeds = manager.get_authorized_seeds(
         AUTHORIZED_TARGETS_FILE
     )
 
-    seeds = manager.get_seeds()
-
-    print("New authorized seeds:", new_seeds)
-    print("Total valid seeds:", len(seeds))
+    print("Authorized seeds for crawling:", len(seeds))
 
     if not seeds:
         print("No authorized targets found.")
         return
 
     for seed in seeds:
-        print("Seed:", seed)
+        print("Authorized Seed:", seed)
 
     # ----------------------------------------
     # M5 - Orchestration
