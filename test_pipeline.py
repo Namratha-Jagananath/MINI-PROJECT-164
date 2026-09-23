@@ -49,7 +49,7 @@ def test_complete_pipeline():
     crawl_results = []
 
     for seed in seeds:
-        result = crawler.fetch(seed)
+        result = crawler.fetch(seed.url)
         crawl_results.append(result)
 
     assert len(crawl_results) >= 1

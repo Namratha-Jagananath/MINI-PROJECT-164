@@ -73,7 +73,7 @@ print("Workers selected:", workers)
 print("\n[M2] TOR CRAWLER")
 print("----------------------------")
 
-crawl_results = orchestrator.crawl(seeds)
+crawl_results = orchestrator.crawl([seed.url for seed in seeds])
 
 for result in crawl_results:
     print("URL:", result.url)

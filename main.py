@@ -85,7 +85,7 @@ def main():
     print("\n[M2] TOR CRAWLER")
     print("-" * 40)
 
-    crawl_results = orchestrator.crawl(seeds)
+    crawl_results = orchestrator.crawl([seed.url for seed in seeds])
 
     for result in crawl_results:
 
