@@ -147,7 +147,7 @@ def main():
 
     for seed in seeds:
 
-        result = liveness_checker.check(seed)
+        result = liveness_checker.check(seed.url)
 
         liveness_results[result.url] = result
 
