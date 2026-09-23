@@ -8,8 +8,12 @@ from sklearn.metrics.pairwise import cosine_similarity
 @dataclass
 class DuplicateRecord:
     url: str
-    duplicate_of: str
+    original_url: str
     content_hash: str
+
+    @property
+    def duplicate_of(self) -> str:
+        return self.original_url
 
 
 @dataclass
@@ -22,7 +26,6 @@ class SimilarityRecord:
 class DeduplicationEngine:
 
     def __init__(self, similarity_threshold: float = 0.80):
-
         self.similarity_threshold = similarity_threshold
 
         self.hash_to_url: Dict[str, str] = {}
@@ -30,6 +33,10 @@ class DeduplicationEngine:
 
         self.duplicates: List[DuplicateRecord] = []
         self.similar_pages: List[SimilarityRecord] = []
+
+    # ---------------------------------------------------------
+    # EXACT DUPLICATE DETECTION
+    # ---------------------------------------------------------
 
     def check_duplicate(
         self,
@@ -46,7 +53,7 @@ class DeduplicationEngine:
 
             record = DuplicateRecord(
                 url=url,
-                duplicate_of=original_url,
+                original_url=original_url,
                 content_hash=content_hash
             )
 
@@ -57,6 +64,10 @@ class DeduplicationEngine:
         self.hash_to_url[content_hash] = url
 
         return None
+
+    # ---------------------------------------------------------
+    # TEXT NORMALIZATION
+    # ---------------------------------------------------------
 
     @staticmethod
     def normalize_text(text: str) -> str:
@@ -77,6 +88,10 @@ class DeduplicationEngine:
             "".join(cleaned).split()
         )
 
+    # ---------------------------------------------------------
+    # TF-IDF + COSINE SIMILARITY
+    # ---------------------------------------------------------
+
     def check_similarity(
         self,
         url: str,
@@ -88,6 +103,7 @@ class DeduplicationEngine:
         if not normalized_text:
             return None
 
+        # First page becomes the reference page.
         if not self.text_pages:
 
             self.text_pages[url] = normalized_text
@@ -117,6 +133,7 @@ class DeduplicationEngine:
             )
 
             new_vector = matrix[-1]
+
             old_vectors = matrix[:-1]
 
             scores = cosine_similarity(
@@ -140,6 +157,7 @@ class DeduplicationEngine:
             if score > best_score:
 
                 best_score = score
+
                 best_match = existing_urls[index]
 
             if score >= self.similarity_threshold:
@@ -167,6 +185,10 @@ class DeduplicationEngine:
 
         return None
 
+    # ---------------------------------------------------------
+    # REPORTING METHODS
+    # ---------------------------------------------------------
+
     def get_duplicates(
         self
     ) -> List[DuplicateRecord]:
@@ -192,6 +214,10 @@ class DeduplicationEngine:
         return len(self.similar_pages)
 
 
+# =============================================================
+# STANDALONE TEST
+# =============================================================
+
 if __name__ == "__main__":
 
     print("=" * 60)
@@ -201,6 +227,10 @@ if __name__ == "__main__":
     engine = DeduplicationEngine(
         similarity_threshold=0.80
     )
+
+    # ---------------------------------------------------------
+    # EXACT DUPLICATE TEST
+    # ---------------------------------------------------------
 
     print("\n[1] EXACT DUPLICATE TEST")
 
@@ -217,9 +247,25 @@ if __name__ == "__main__":
     if duplicate:
 
         print("Exact duplicate detected")
-        print("URL:", duplicate.url)
-        print("Original:", duplicate.duplicate_of)
-        print("Hash:", duplicate.content_hash)
+
+        print(
+            "URL:",
+            duplicate.url
+        )
+
+        print(
+            "Original:",
+            duplicate.original_url
+        )
+
+        print(
+            "Hash:",
+            duplicate.content_hash
+        )
+
+    # ---------------------------------------------------------
+    # TF-IDF + COSINE SIMILARITY TEST
+    # ---------------------------------------------------------
 
     print("\n[2] TF-IDF + COSINE SIMILARITY TEST")
 
@@ -255,8 +301,17 @@ if __name__ == "__main__":
     if similarity:
 
         print("ML similarity match detected")
-        print("URL:", similarity.url)
-        print("Similar to:", similarity.similar_to)
+
+        print(
+            "URL:",
+            similarity.url
+        )
+
+        print(
+            "Similar to:",
+            similarity.similar_to
+        )
+
         print(
             "Cosine similarity:",
             round(
@@ -273,8 +328,17 @@ if __name__ == "__main__":
     if similarity:
 
         print("ML similarity match detected")
-        print("URL:", similarity.url)
-        print("Similar to:", similarity.similar_to)
+
+        print(
+            "URL:",
+            similarity.url
+        )
+
+        print(
+            "Similar to:",
+            similarity.similar_to
+        )
+
         print(
             "Cosine similarity:",
             round(
@@ -282,6 +346,10 @@ if __name__ == "__main__":
                 4
             )
         )
+
+    # ---------------------------------------------------------
+    # SUMMARY
+    # ---------------------------------------------------------
 
     print("\n" + "=" * 60)
     print("ML DEDUPLICATION SUMMARY")

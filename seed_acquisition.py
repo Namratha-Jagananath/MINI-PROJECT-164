@@ -172,8 +172,9 @@ class SeedAcquisitionManager:
         return sorted(self.seeds.keys())
 
     def get_authorized_seeds(self, authorization_file):
-        """Return only seeds explicitly listed in the authorization file."""
-        authorized_urls = set()
+        """Return only URLs explicitly listed in the authorization file."""
+
+        authorized_seeds = []
 
         try:
             with open(authorization_file, "r") as file:
@@ -183,10 +184,26 @@ class SeedAcquisitionManager:
                     if not url or url.startswith("#"):
                         continue
 
-                    if self.is_valid_onion_url(url):
-                        authorized_urls.add(
-                            self.normalize_url(url)
+                    if not self.is_valid_onion_url(url):
+                        continue
+
+                    parsed = urlparse(url)
+
+                    scheme = parsed.scheme.lower()
+                    hostname = parsed.hostname.lower()
+                    path = parsed.path or "/"
+
+                    authorized_url = f"{scheme}://{hostname}{path}"
+
+                    authorized_seeds.append(
+                        Seed(
+                            url=authorized_url,
+                            source="authorization-file",
+                            discovered_at=datetime.now(
+                                timezone.utc
+                            ).isoformat()
                         )
+                    )
 
         except FileNotFoundError:
             print(
@@ -195,11 +212,12 @@ class SeedAcquisitionManager:
             )
             return []
 
-        return [
-            seed
-            for seed in self.get_seeds()
-            if seed.url in authorized_urls
-        ]
+        # Remove duplicate authorized URLs while preserving order.
+        unique_seeds = {}
+        for seed in authorized_seeds:
+            unique_seeds[seed.url] = seed
+
+        return list(unique_seeds.values())
 
 
 if __name__ == "__main__":
