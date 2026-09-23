@@ -1,9 +1,0 @@
-services:
-  tor-crawler:
-    build: .
-    container_name: tor-crawler
-    environment:
-      TOR_PROXY_HOST: host.docker.internal
-      TOR_PROXY_PORT: "9050"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
