@@ -1,42 +1,88 @@
 """
-Continuous Liveness Verification Module (M4)
+Liveness Checking Module (M4)
 
-Responsibility:
-    Periodically re-visit enumerated URLs to confirm which services are
-    still active, and update the dataset's liveness status accordingly.
-
-Status: SCAFFOLD — interfaces only, implementation pending (Week 11-12).
+Checks whether an authorized .onion service is reachable
+through the local Tor SOCKS proxy.
 """
 
 from dataclasses import dataclass
-from typing import List
+from datetime import datetime, timezone
+
+import requests
 
 
 @dataclass
 class LivenessRecord:
     url: str
     is_active: bool
+    status_code: int | None
     last_checked_at: str
 
 
 class LivenessChecker:
-    """Re-checks a batch of known URLs on a schedule and reports status changes."""
+    def __init__(
+        self,
+        tor_socks_proxy="socks5h://127.0.0.1:9050",
+        timeout=20,
+    ):
+        self.tor_socks_proxy = tor_socks_proxy
+        self.timeout = timeout
 
-    def __init__(self, check_interval_hours: int = 24):
-        self.check_interval_hours = check_interval_hours
+        self.session = requests.Session()
 
-    def check(self, urls: List[str]) -> List[LivenessRecord]:
-        """Check each URL's current reachability and return updated records.
+        self.session.proxies.update({
+            "http": self.tor_socks_proxy,
+            "https": self.tor_socks_proxy,
+        })
 
-        TODO: implement lightweight reachability check (e.g. HEAD-style
-        request through Tor) distinct from the full crawl in crawler.py.
-        """
-        raise NotImplementedError
+        self.session.headers.update({
+            "User-Agent": "Authorized-Tor-Liveness-Checker/1.0"
+        })
 
-    def schedule(self) -> None:
-        """Set up the periodic re-check job (e.g. via a cron-style scheduler
-        or a Kubernetes CronJob in production).
+    def check(self, url):
+        """Check whether the .onion URL is currently reachable."""
 
-        TODO: implement scheduling/orchestration hook.
-        """
-        raise NotImplementedError
+        checked_at = datetime.now(timezone.utc).isoformat()
+
+        try:
+            response = self.session.get(
+                url,
+                timeout=self.timeout,
+                allow_redirects=True,
+            )
+
+            return LivenessRecord(
+                url=url,
+                is_active=response.status_code < 400,
+                status_code=response.status_code,
+                last_checked_at=checked_at,
+            )
+
+        except requests.RequestException:
+
+            return LivenessRecord(
+                url=url,
+                is_active=False,
+                status_code=None,
+                last_checked_at=checked_at,
+            )
+
+
+if __name__ == "__main__":
+
+    url = (
+        "http://"
+        "lumz6w62s6jhdqpzbk35xlvcr25in7cgl3mjb5e5z5wi2u3x6me5w3yd"
+        ".onion"
+    )
+
+    checker = LivenessChecker()
+
+    result = checker.check(url)
+
+    print("\n===== LIVENESS CHECK =====\n")
+
+    print("URL:", result.url)
+    print("Active:", result.is_active)
+    print("Status Code:", result.status_code)
+    print("Checked At:", result.last_checked_at)
