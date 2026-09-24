@@ -79,6 +79,9 @@ Containerize the application using Docker.
 Provide automated testing for the implemented modules.
 
 4. System Architecture
+
+![System Architecture of the Proposed Model](./docs/architecture/TOR_Architecture_M1_M6.png)
+
 The system consists of six major modules:
 
                  ┌──────────────────────────┐
